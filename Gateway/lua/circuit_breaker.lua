@@ -46,6 +46,18 @@ function _M.record(addr, ok)
     end
 end
 
+function _M.node_count()
+    local raw = upstreams:get("nodes")
+    if not raw then
+        return 0
+    end
+    local nodes = cjson.decode(raw)
+    if type(nodes) ~= "table" then
+        return 0
+    end
+    return #nodes
+end
+
 function _M.all_open()
     local raw = upstreams:get("nodes")
     if not raw then

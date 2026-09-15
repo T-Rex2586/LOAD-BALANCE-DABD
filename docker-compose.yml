@@ -24,9 +24,24 @@ services:
       timeout: 5s
       retries: 10
 
+  consul:
+    image: hashicorp/consul:1.20
+    container_name: kantin_consul
+    restart: unless-stopped
+    command: ["agent", "-dev", "-client=0.0.0.0", "-ui", "-log-level=warn"]
+    ports:
+      - "8500:8500"
+    healthcheck:
+      test: ["CMD", "consul", "members"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   api:
     build: ./api
     restart: unless-stopped
+    deploy:
+      replicas: 3
     environment:
       DB_HOST: db
       DB_PORT: 5432
@@ -41,8 +56,13 @@ services:
       API_ADMIN_PASSWORD: ${API_ADMIN_PASSWORD:-admin123}
       API_VIEWER_USERNAME: ${API_VIEWER_USERNAME:-viewer}
       API_VIEWER_PASSWORD: ${API_VIEWER_PASSWORD:-viewer123}
+      CONSUL_HTTP_ADDR: http://consul:8500
+      CONSUL_ENABLED: "1"
+      SERVICE_NAME: api
     depends_on:
       db:
+        condition: service_healthy
+      consul:
         condition: service_healthy
     expose:
       - "8000"
@@ -58,6 +78,24 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+
+  gateway:
+    build: ./Gateway
+    container_name: kantin_gateway
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    environment:
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+    depends_on:
+      consul:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/_gateway/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 
 volumes:
   pgdata:

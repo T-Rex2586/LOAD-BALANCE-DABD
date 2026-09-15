@@ -1,42 +1,40 @@
 local _M = {}
 
-local RESOURCES = {
-    stand = true,
-    kategori = true,
-    menu = true,
-    transaksi = true,
-    detail_transaksi = true,
+local PUBLIC = {
+    ["/auth/login"] = true,
+    ["/health"] = true,
+    ["/"] = true,
+    ["/docs"] = true,
+    ["/docs/oauth2-redirect"] = true,
+    ["/redoc"] = true,
+    ["/openapi.json"] = true,
 }
 
-local function required_scope(method, resource)
-    if method == "GET" or method == "HEAD" or method == "OPTIONS" then
-        return "read:" .. resource
-    end
-    return "write:" .. resource
-end
+local READ_ONLY = {
+    GET = true,
+    HEAD = true,
+    OPTIONS = true,
+}
 
-local function has_scope(client, scope)
-    for _, s in ipairs(client.scopes) do
-        if s == "*" or s == scope then
-            return true
-        end
-    end
-    return false
+function _M.is_public(uri)
+    return PUBLIC[uri] == true
 end
 
 function _M.authorize(client)
-    local method = ngx.req.get_method()
-    local resource = ngx.var.uri:match("^/([^/]+)")
-    if not resource or not RESOURCES[resource] then
+    local uri = ngx.var.uri
+    local resource = uri:match("^/([^/]+)")
+    if resource ~= "menu" then
         return nil, "unknown resource"
     end
 
-    local scope = required_scope(method, resource)
-    if not has_scope(client, scope) then
-        return nil, "missing required scope: " .. scope
+    local method = ngx.req.get_method()
+    if READ_ONLY[method] then
+        return true
     end
 
-    ngx.ctx.required_scope = scope
+    if client.role ~= "admin" then
+        return nil, "role 'admin' is required for " .. method .. " " .. uri
+    end
     return true
 end
 

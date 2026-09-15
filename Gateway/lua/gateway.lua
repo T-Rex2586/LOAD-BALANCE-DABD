@@ -37,20 +37,19 @@ function _M.error_page()
 end
 
 function _M.access()
-    local client, err = require("auth").authenticate()
-    if not client then
-        return _M.json(401, "unauthorized", err)
-    end
+    local authz = require("authz")
 
-    ngx.ctx.client = client
-    ngx.var.client_id = client.id
-    ngx.req.set_header("X-Client-Id", client.id)
-    ngx.req.set_header("X-Client-Scopes", table.concat(client.scopes, ","))
-    ngx.req.set_header("X-API-Key", nil)
+    if not authz.is_public(ngx.var.uri) then
+        local client, err = require("auth").authenticate()
+        if not client then
+            return _M.json(401, "unauthorized", err)
+        end
+        ngx.ctx.client = client
 
-    local ok, aerr = require("authz").authorize(client)
-    if not ok then
-        return _M.json(403, "forbidden", aerr)
+        local ok, aerr = authz.authorize(client)
+        if not ok then
+            return _M.json(403, "forbidden", aerr)
+        end
     end
 
     local vok, verr = require("validate").validate()
@@ -58,7 +57,11 @@ function _M.access()
         return _M.json(400, "invalid_request", verr)
     end
 
-    if require("circuit_breaker").all_open() then
+    local cb = require("circuit_breaker")
+    if cb.node_count() == 0 then
+        return _M.json(503, "no_upstream", "no healthy upstream instances registered")
+    end
+    if cb.all_open() then
         return _M.json(503, "circuit_open", "all upstream instances are circuit-open")
     end
 end

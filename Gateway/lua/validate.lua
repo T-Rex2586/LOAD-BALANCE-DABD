@@ -1,5 +1,4 @@
 local cjson = require("cjson.safe")
-local jsonschema = require("jsonschema")
 
 local _M = {}
 
@@ -32,6 +31,7 @@ local function get_validator(resource)
         return nil, "invalid schema file for resource: " .. resource
     end
 
+    local jsonschema = require("jsonschema")
     local ok, validator = pcall(jsonschema.generate_validator, schema)
     if not ok then
         return nil, "failed to compile schema for " .. resource .. ": " .. tostring(validator)
@@ -57,13 +57,9 @@ end
 
 function _M.validate()
     local method = ngx.req.get_method()
-    if not BODY_METHODS[method] then
-        return true
-    end
-
     local resource = ngx.var.uri:match("^/([^/]+)")
-    if not resource then
-        return nil, "unknown resource"
+    if resource ~= "menu" or not BODY_METHODS[method] then
+        return true
     end
 
     local ctype = string.lower(ngx.var.content_type or "")

@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, status
 
+from . import consul
 from .db import close_pool, get_pool, init_pool
 from .routers import auth, menu
 
@@ -15,7 +16,9 @@ logging.basicConfig(
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_pool()
+    consul.start()
     yield
+    consul.stop()
     close_pool()
 
 

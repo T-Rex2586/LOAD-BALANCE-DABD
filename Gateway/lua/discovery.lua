@@ -9,7 +9,12 @@ local SERVICE = "api"
 local INTERVAL = 3
 
 function _M.start()
-    local ok, err = ngx.timer.every(INTERVAL, _M.sync)
+    local ok, err = ngx.timer.at(0, _M.sync)
+    if not ok then
+        ngx.log(ngx.ERR, "discovery: failed to schedule initial sync: ", err)
+    end
+
+    ok, err = ngx.timer.every(INTERVAL, _M.sync)
     if not ok then
         ngx.log(ngx.ERR, "discovery: failed to create timer: ", err)
     end
@@ -41,19 +46,24 @@ function _M.sync(premature)
     end
 
     local nodes = {}
+    local seen = {}
     for _, entry in ipairs(data) do
         local svc = entry.Service or {}
-        local addr = svc.Address
-        if not addr or addr == "" then
-            addr = (entry.Node or {}).Address
+        local host = svc.Address
+        if not host or host == "" then
+            host = (entry.Node or {}).Address
         end
-        if addr and svc.Port then
-            nodes[#nodes + 1] = {
-                id = svc.ID or (addr .. ":" .. tostring(svc.Port)),
-                host = addr,
-                port = svc.Port,
-                addr = addr .. ":" .. tostring(svc.Port),
-            }
+        if host and svc.Port then
+            local addr = host .. ":" .. tostring(svc.Port)
+            if not seen[addr] then
+                seen[addr] = true
+                nodes[#nodes + 1] = {
+                    id = svc.ID or addr,
+                    host = host,
+                    port = svc.Port,
+                    addr = addr,
+                }
+            end
         end
     end
 
