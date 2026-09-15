@@ -1,0 +1,27 @@
+{
+  "keys": [
+    {
+      "key": "admin-secret-key",
+      "id": "admin",
+      "scopes": ["*"]
+    },
+    {
+      "key": "kasir-secret-key",
+      "id": "kasir",
+      "scopes": [
+        "read:stand",
+        "read:kategori",
+        "read:menu",
+        "read:transaksi",
+        "write:transaksi",
+        "read:detail_transaksi",
+        "write:detail_transaksi"
+      ]
+    },
+    {
+      "key": "publik-secret-key",
+      "id": "publik",
+      "scopes": ["read:stand", "read:kategori", "read:menu"]
+    }
+  ]
+}

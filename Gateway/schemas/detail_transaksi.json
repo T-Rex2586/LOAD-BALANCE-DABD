@@ -1,0 +1,13 @@
+{
+  "type": "object",
+  "properties": {
+    "id_transaksi": { "type": "integer" },
+    "id_menu": { "type": "integer" },
+    "jumlah": { "type": "integer", "minimum": 1 },
+    "harga_satuan": { "type": "number", "minimum": 0 },
+    "subtotal": { "type": "number", "minimum": 0 },
+    "catatan": { "type": "string", "maxLength": 100 }
+  },
+  "required": ["id_transaksi", "id_menu", "jumlah", "harga_satuan", "subtotal"],
+  "additionalProperties": false
+}

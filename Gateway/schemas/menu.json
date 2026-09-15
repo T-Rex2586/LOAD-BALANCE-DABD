@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "properties": {
+    "id_stand": { "type": "integer" },
+    "id_kategori": { "type": "integer" },
+    "nama_menu": { "type": "string", "minLength": 1, "maxLength": 100 },
+    "harga": { "type": "number", "minimum": 0 },
+    "status": { "type": "string", "enum": ["tersedia", "habis"] }
+  },
+  "required": ["id_stand", "id_kategori", "nama_menu", "harga"],
+  "additionalProperties": false
+}
