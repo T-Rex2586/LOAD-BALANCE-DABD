@@ -1,0 +1,6 @@
+# Override untuk testing lokal di host (publish port API).
+# Pakai: docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+services:
+  api:
+    ports:
+      - "${API_PORT:-8000}:8000"
