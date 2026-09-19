@@ -1,0 +1,101 @@
+name: load-balance-dabd
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: kantin_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-password123}
+      POSTGRES_DB: ${DB_NAME:-db_kantin}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./Database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-db_kantin}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  consul:
+    image: hashicorp/consul:1.20
+    container_name: kantin_consul
+    restart: unless-stopped
+    command: ["agent", "-dev", "-client=0.0.0.0", "-ui", "-log-level=warn"]
+    ports:
+      - "8500:8500"
+    healthcheck:
+      test: ["CMD", "consul", "members"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: ./api
+    restart: unless-stopped
+    deploy:
+      replicas: 3
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-db_kantin}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-password123}
+      APP_PORT: 8000
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-60}
+      API_ADMIN_USERNAME: ${API_ADMIN_USERNAME:-admin}
+      API_ADMIN_PASSWORD: ${API_ADMIN_PASSWORD:-admin123}
+      API_VIEWER_USERNAME: ${API_VIEWER_USERNAME:-viewer}
+      API_VIEWER_PASSWORD: ${API_VIEWER_PASSWORD:-viewer123}
+      CONSUL_HTTP_ADDR: http://consul:8500
+      CONSUL_ENABLED: "1"
+      SERVICE_NAME: api
+    depends_on:
+      db:
+        condition: service_healthy
+      consul:
+        condition: service_healthy
+    expose:
+      - "8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=2).status == 200 else 1)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  gateway:
+    build: ./Gateway
+    container_name: kantin_gateway
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    environment:
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+    depends_on:
+      consul:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/_gateway/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  pgdata:
