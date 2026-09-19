@@ -60,6 +60,9 @@ Gateway/
     logging.lua           # catat hasil upstream ke circuit breaker
     status.lua            # GET /_gateway/status (admin)
   schemas/menu.json       # JSON Schema body menu
+tests/
+  verify.ps1              # verifikasi end-to-end (PowerShell)
+  verify.sh               # verifikasi end-to-end (bash)
 ```
 
 ## Endpoint (via gateway `http://localhost:8080`)
@@ -105,7 +108,7 @@ Kredensial default (ubah lewat `.env`):
 | Reverse proxy | `proxy_pass http://api_backend` |
 | Load balancing | `balancer_by_lua` round-robin (per-request `X-Upstream-Addr`) |
 | Service discovery | timer 3s ke Consul → `lua_shared_dict upstreams` |
-| Health check | Consul check `GET /health` tiap 5s |
+| Health check | Consul check `GET /health` tiap 30s (lihat `api/app/consul.py`) |
 | Circuit breaker | `lua_shared_dict cb_state`, 3 gagal → OPEN 10s → HALF-OPEN |
 | Rate limiter | `limit_req`/`limit_conn` key dari `Authorization` (fallback IP) |
 | Authentication | verifikasi JWT (lua-resty-jwt, whitelist HS256) |
@@ -148,33 +151,64 @@ curl -X POST http://localhost:8080/menu \
 curl http://localhost:8080/_gateway/status -H "Authorization: Bearer $TOKEN"
 ```
 
-## Uji Perilaku Gateway
-```bash
-# 401 tanpa token
-curl -i http://localhost:8080/menu
+## Verifikasi Otomatis
+Prasyarat: stack berjalan (`docker compose up -d`) dan Docker CLI tersedia.
+Script menjalankan seluruh matriks di bawah, mencetak `PASS/FAIL`, dan keluar
+dengan kode `0` bila semua lulus.
 
-# 403 viewer mencoba POST
-VIEWER=<viewer_token>
-curl -i -X POST http://localhost:8080/menu \
-  -H "Authorization: Bearer $VIEWER" -H "Content-Type: application/json" \
-  -d '{"id_stand":1,"id_kategori":1,"nama_menu":"X","harga":10}'
+PowerShell (Windows):
+```powershell
+# jalankan semua uji (termasuk failover/circuit breaker)
+powershell -NoProfile -ExecutionPolicy Bypass -File tests/verify.ps1
 
-# 400 validasi JSON (harga <= 0 / field asing)
-curl -i -X POST http://localhost:8080/menu \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"id_stand":1,"id_kategori":1,"nama_menu":"X","harga":0}'
+# lewati uji chaos (tidak menghentikan replica)
+powershell -NoProfile -ExecutionPolicy Bypass -File tests/verify.ps1 -SkipChaos
 
-# 429 rate limit (burst banyak request)
-for ($i=0; $i -lt 100; $i++) { curl -s -o $null http://localhost:8080/health }
-
-# load balancing: lihat header X-Upstream-Addr berganti antar replica
-curl -i http://localhost:8080/menu -H "Authorization: Bearer $TOKEN"
-
-# circuit breaker: hentikan replica, lalu matikan semua
-docker compose stop <api-container>   # sisa replica tetap melayani
-docker compose stop api               # semua down -> 503 circuit_open
-docker compose start api              # pulih -> closed
+# ganti target/burst
+powershell -NoProfile -ExecutionPolicy Bypass -File tests/verify.ps1 -BaseUrl http://localhost:8080 -Burst 300
 ```
+
+Bash (Linux/macOS/Git Bash):
+```bash
+bash tests/verify.sh
+SKIP_CHAOS=1 bash tests/verify.sh
+BASE_URL=http://localhost:8080 BURST=300 bash tests/verify.sh
+```
+
+## Matriks Uji Manual
+Definisikan `G=http://localhost:8080`. Ambil token lebih dulu:
+```bash
+TOKEN=$(curl -s -X POST $G/auth/login -d "username=admin&password=admin123" | sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p')
+VIEWER=$(curl -s -X POST $G/auth/login -d "username=viewer&password=viewer123" | sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p')
+```
+
+| # | Skenario | Perintah (ringkas) | Diharapkan |
+|---|---|---|---|
+| 1 | Health gateway | `curl -i $G/_gateway/health` | `200 {"status":"ok"}` |
+| 2 | Login admin/viewer | `curl -i -X POST $G/auth/login -d "username=admin&password=admin123"` | `200` + `access_token` |
+| 3 | Tanpa token | `curl -i $G/menu` | `401 unauthorized` |
+| 4 | Token invalid | `curl -i $G/menu -H "Authorization: Bearer x"` | `401` |
+| 5 | GET menu (admin) | `curl -i $G/menu -H "Authorization: Bearer $TOKEN"` | `200` + data |
+| 6 | GET menu (viewer) | `curl -i $G/menu -H "Authorization: Bearer $VIEWER"` | `200` |
+| 7 | Viewer mencoba write | `curl -i -X POST $G/menu -H "Authorization: Bearer $VIEWER" -H "Content-Type: application/json" -d '{"id_stand":1,"id_kategori":1,"nama_menu":"X","harga":10}'` | `403 forbidden` |
+| 8 | Validasi `harga <= 0` | POST (admin) `{"...","harga":0}` | `400 invalid_request` |
+| 9 | Validasi field asing | POST (admin) `{"...","harga":10,"foo":1}` | `400` |
+| 10 | Validasi field kurang | POST (admin) tanpa `id_stand` | `400` |
+| 11 | JSON rusak | POST (admin) `{not-json` | `400` |
+| 12 | POST valid | POST (admin) body lengkap | `201` |
+| 13 | Load balancing | `curl -i $G/menu -H "Authorization: Bearer $TOKEN"` beberapa kali | header `X-Upstream-Addr` berganti antar replica |
+| 14 | Status discovery/CB | `curl -s $G/_gateway/status -H "Authorization: Bearer $TOKEN"` | JSON `node_count` + `upstream_nodes[].circuit` |
+| 15 | Rate limit | burst paralel (lihat `tests/verify.*`) | sebagian request `429 rate_limited` |
+| 16 | Failover | `docker stop load-balance-dabd-api-1` lalu `curl $G/menu` | tetap `200` dari replica lain |
+| 17 | Circuit breaker | hammer `GET /menu`, lalu cek status | node mati `"circuit":"open"` |
+| 18 | Pemulihan CB | `docker start load-balance-dabd-api-1`, tunggu ~12s | node kembali `"closed"` |
+| 19 | Semua replica mati | `docker stop` semua `load-balance-dabd-api-*`, lalu `curl $G/menu` | `503 no_upstream` (transien `504` sebelum Consul memperbarui) |
+| 20 | Pulihkan | `docker compose up -d api` | `200` kembali |
+
+Catatan matriks uji:
+- Nama service compose adalah `api` (`docker compose stop api` menghentikan **semua** replica). Untuk menghentikan satu replica, pakai nama container, mis. `docker stop load-balance-dabd-api-1`.
+- `circuit_open` (503) muncul saat replica masih terdaftar di Consul tetapi **semua** circuit-nya OPEN. Bila Consul sudah mengeluarkan semua replica, responsnya `no_upstream`.
+- Rate limiter memakai key `Authorization` (fallback IP), rate `20r/s` + `burst=40`. Uji harus berupa burst paralel; loop serial biasanya tidak memicu `429`.
 
 ## Catatan
 - `Database/docker-compose.yaml` adalah runner DB standalone (opsional); root `docker-compose.yml` sudah mencakup `db`.
